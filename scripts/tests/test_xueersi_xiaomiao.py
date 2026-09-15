@@ -55,13 +55,22 @@ class XueersiXiaomiaoBoardTests(unittest.TestCase):
     def test_board_source_preserves_runtime_contracts(self):
         source = (BOARD_DIR / "xueersi_xiaomiao.cc").read_text(encoding="utf-8")
         self.assertEqual(source.count("DECLARE_BOARD(XueersiXiaomiao)"), 1)
-        self.assertIn("NoAudioCodecDuplex", source)
+        self.assertIn("XiaomiaoAudioCodec", source)
         self.assertIn("esp_lcd_new_panel_st7735", source)
         self.assertIn("new SpiLcdDisplay", source)
         self.assertIn("CreateButton(RIGHT_BUTTON_GPIO, true)", source)
         self.assertIn("CreateButton(A_BUTTON_GPIO, true)", source)
         self.assertGreaterEqual(source.count("Application::GetInstance().Schedule"), 8)
         self.assertGreaterEqual(source.count("kDeviceStateStarting"), 7)
+
+    def test_audio_codec_forces_tx_clock_and_logs_read_path(self):
+        codec = (BOARD_DIR / "xiaomiao_audio_codec.cc").read_text(encoding="utf-8")
+        header = (BOARD_DIR / "xiaomiao_audio_codec.h").read_text(encoding="utf-8")
+        self.assertIn("void XiaomiaoAudioCodec::EnableInput(bool enable)", codec)
+        self.assertIn("i2s_channel_enable(tx_handle_)", codec)
+        self.assertIn("i2s_channel_read failed", codec)
+        self.assertIn("Read() entered", codec)
+        self.assertIn("EnableInput(bool enable) override", header)
 
     def test_build_metadata_targets_classic_esp32_with_psram(self):
         config = json.loads((BOARD_DIR / "config.json").read_text(encoding="utf-8"))

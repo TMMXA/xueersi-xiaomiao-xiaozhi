@@ -77,10 +77,22 @@ int XiaomiaoAudioCodec::Read(int16_t* dest, int samples) {
     constexpr uint32_t kReadTimeoutMs = 200;
     constexpr int kPhysicalChannels = 2;
 
+    if (!read_entered_logged_) {
+        read_entered_logged_ = true;
+        ESP_LOGI(TAG, "Read() entered (input task is calling the codec)");
+    }
+
     rx_buffer_.resize(static_cast<size_t>(samples) * kPhysicalChannels);
     size_t bytes_read = 0;
-    if (i2s_channel_read(rx_handle_, rx_buffer_.data(), rx_buffer_.size() * sizeof(rx_buffer_[0]),
-                         &bytes_read, kReadTimeoutMs) != ESP_OK) {
+    const esp_err_t err = i2s_channel_read(rx_handle_, rx_buffer_.data(),
+                                           rx_buffer_.size() * sizeof(rx_buffer_[0]), &bytes_read,
+                                           kReadTimeoutMs);
+    if (err != ESP_OK) {
+        const int64_t now = esp_timer_get_time();
+        if (now - last_error_log_time_ >= 1000000) {
+            last_error_log_time_ = now;
+            ESP_LOGW(TAG, "i2s_channel_read failed: %s", esp_err_to_name(err));
+        }
         return 0;
     }
 
@@ -128,4 +140,18 @@ int XiaomiaoAudioCodec::Write(const int16_t* data, int samples) {
                                       tx_buffer_.size() * sizeof(tx_buffer_[0]), &bytes_written,
                                       portMAX_DELAY));
     return static_cast<int>(bytes_written / (sizeof(int32_t) * kPhysicalChannels));
+}
+
+void XiaomiaoAudioCodec::EnableInput(bool enable) {
+    // Classic ESP32 full-duplex pairs generate BCLK/WS from the TX channel.
+    // PTT enables RX alone, so start TX first or i2s_channel_read times out.
+    if (enable && tx_handle_ != nullptr && !output_enabled_) {
+        std::lock_guard<std::mutex> lock(data_if_mutex_);
+        if (!output_enabled_) {
+            ESP_ERROR_CHECK(i2s_channel_enable(tx_handle_));
+            AudioCodec::EnableOutput(true);
+            ESP_LOGI(TAG, "Enabled TX clock source before RX (shared BCLK/WS)");
+        }
+    }
+    NoAudioCodec::EnableInput(enable);
 }

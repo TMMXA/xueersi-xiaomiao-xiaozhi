@@ -1,27 +1,32 @@
 # 学而思“小喵”移植交接（xiaozhi-esp32）
 
-更新时间：2026-09-15 23:00（Asia/Hong_Kong）
+更新时间：2026-09-16（Asia/Hong_Kong）
 
 ## 1. 当前结论
 
-`xueersi-xiaomiao` 已完成显示、按键、配网、激活、联网和扬声器下行，但**麦克风上行仍未打通，不能把完整移植标记为成功**。
+`xueersi-xiaomiao` **麦克风上行与多轮对话已在实机打通**（在 TX 时钟保持运行时）。
 
-已由实机确认：
+2026-09-16 串口日志（编译时间 Sep 15 22:44:45 的 stereo-framed 驱动）确认：
 
-- 经典 ESP32-WROVER/B、4 MB Flash、PSRAM 启动正常。
-- ST7735 以 160x128 横屏显示，方向、颜色正常且没有裁切。
-- Wi-Fi 配网、设备激活、MQTT 登录成功。
-- 扬声器能够正常播放提示音和服务器语音。
-- 上/下键调节音量，左/右键切换明暗主题，A/B 键事件均能进入代码。
-- 轻量表情资源直接写入 assets 分区后能够正常显示。
+- A 键 PTT 进入 listening 后持续出现 `XiaomiaoAudio: Microphone level: peak=... rms=...`。
+- STT 正确回显：`你好呀。` / `今天天气怎么样？` / `呃，以后你可以称呼我为梅老板。` 等。
+- TTS 多轮回复正常，含 `% get_weather...` / `% search_music...` / `% play_music...` 工具调用。
+- 音量、主题、扬声器下行仍正常。
 
-当前阻塞问题：
+根因与修复（2026-09-16 已刷机确认）：
 
-- A 键 PTT 和 B 键自动对话均能进入 `listening`。
-- 串口确认 `AudioCodec: Set input enable to true`。
-- 小智平台没有产生历史消息，设备没有收到识别文本或回复。
-- 服务器会在没有识别结果后关闭音频会话。
-- 2026-09-15 晚间已刷入“物理双声道 I2S 帧”实验驱动，但串口仍未出现任何麦克风 `peak/rms` 日志。因此目前更像是 I2S RX 没有返回帧，而不只是音量太小。
+1. **根因**：全双工 RX 为 slave，BCLK/WS 由 TX 生成。电源管理 `Set output enable to false` 后，再 PTT 只开 RX，麦克风无数据甚至死机。
+2. **修复**：`XiaomiaoAudioCodec::EnableInput()` 在启用 RX 前若 TX 未开则先拉起 TX；`Read()` 增加限频诊断日志。刷入 `0x10000` 后回归「等 TX 关闭 → 再 PTT」通过。
+3. 说话时常见 `peak=32768`，是 `abs(INT16_MIN)` 的满量程削波，STT 仍可用；后续可微调 `>>12` 或输入增益，不阻塞验收。
+
+启动日志中的关键硬件提示：
+
+```text
+W (2084) i2s_common: the rx channel on I2S0 is switched from master to slave for full-duplex mode
+I (2084) XiaomiaoAudio: Stereo-framed duplex I2S created at 24000 Hz
+```
+
+全双工时 RX 被切到 slave，时钟完全由 TX 提供——与上述失效模式一致。
 
 私人仓库：<https://github.com/TMMXA/xueersi-xiaomiao-xiaozhi>
 
@@ -104,7 +109,7 @@ GPIO34/35 无内部上拉，A/右键依赖小喵 PCB 的空闲高电平偏置。
 
 - `main/boards/xueersi-xiaomiao/config.h`：24 kHz 音频、LCD 和按键引脚。
 - `main/boards/xueersi-xiaomiao/xueersi_xiaomiao.cc`：板型、LCD、按键与 codec 实例。
-- `main/boards/xueersi-xiaomiao/xiaomiao_audio_codec.{h,cc}`：2026-09-15 新增的实验音频驱动。
+- `main/boards/xueersi-xiaomiao/xiaomiao_audio_codec.{h,cc}`：2026-09-15 新增的实验音频驱动；2026-09-16 起启用 TX 时钟优先 + Read 诊断日志。
 - `main/boards/xueersi-xiaomiao/config.json`：ESP32 + PSRAM 构建元数据。
 - `scripts/tests/test_xueersi_xiaomiao.py`：板型约束回归测试。
 - `.github/workflows/build.yml`：私人仓库只构建小喵板型。
@@ -116,7 +121,13 @@ GPIO34/35 无内部上拉，A/右键依赖小喵 PCB 的空闲高电平偏置。
 - 扬声器把同一 PCM 复制到左右两个物理槽，避免 MAX98357A 声道选择差异。
 - 每秒打印一次 `Microphone level: peak=... rms=...`，用于确认 RX 是否返回数据。
 
-重要：该驱动**已编译并刷入，但还没有证明修复成功**。第一次实测 listening 期间完全没出现电平日志。下一步应先给 `Read()` 的进入和错误返回加限频日志，而不是继续调整增益或服务器参数。
+重要：2026-09-15 stereo 帧驱动曾出现「TX 已开则麦克可用、TX 关掉后再 PTT 失效」。2026-09-16 已构建并刷入 EnableInput-TX 时钟修复（仅应用分区 `0x10000`），实机回归通过。诊断日志分支：
+
+1. 出现 `Read() entered` → 输入任务已调用 codec。
+2. 出现 `Enabled TX clock source before RX` → 时钟源强制路径已生效。
+3. 出现 `i2s_channel_read failed: ESP_ERR_TIMEOUT` → 时钟仍不跑，再查 TX 是否真正驱动 BCLK（或需要周期性写静音）。
+4. 出现 `Microphone level: peak=...` → I2S RX 已通，再查 STT/Opus/UDP。
+5. peak/rms 恒 0 但有电平日志 → 查 ICS43434 供电、L/R 槽、GPIO32、位对齐。
 
 ## 4. 2026-09-15 故障复现证据
 
@@ -188,19 +199,20 @@ python .\scripts\build.py xueersi-xiaomiao `
   --wake-word disabled
 ```
 
-### 5.2 首要诊断修改
+### 5.2 首要诊断与已落地修改
 
-在 `XiaomiaoAudioCodec::Read()` 中加入限频日志：
+已在代码中完成并刷机验证：
 
-1. 第一次进入 `Read()` 时打印一次，证明输入任务已调用。
+1. `Read()` 第一次进入时打印一次，证明输入任务已调用。
 2. 保存 `i2s_channel_read()` 返回的 `esp_err_t`。
-3. 失败时每秒打印一次 `esp_err_to_name(error)`，不能每 10 ms 刷屏。
-4. 成功时保留现有 peak/RMS 日志。
+3. 失败时每秒打印一次 `esp_err_to_name(error)`。
+4. 成功时保留 peak/RMS 日志。
+5. `EnableInput(true)` 时若 TX 未开，先使能 TX 再使能 RX。
 
 判断分支：
 
-- 从未进入 `Read()`：检查 `AS_EVENT_AUDIO_PROCESSOR_RUNNING`、`AudioInputTask` 和 `EnableVoiceProcessing(true)`。
-- 进入但持续 `ESP_ERR_TIMEOUT`：检查 RX channel 是否真正产生 BCLK/WS，必要时验证配对 TX/RX 的 enable 顺序。
+- 没有 `Read() entered`：检查 `AS_EVENT_AUDIO_PROCESSOR_RUNNING`、`AudioInputTask` 和 `EnableVoiceProcessing(true)`。
+- 有 `Read() entered` 但持续 `ESP_ERR_TIMEOUT`：TX 时钟仍未驱动 BCLK/WS；下一步考虑在 RX 活跃期间周期性写入静音，或用示波器确认 GPIO25/26。
 - Read 成功但 peak/rms 恒 0：再检查 ICS43434 供电、L/R 槽选择、GPIO32 和位对齐。
 - peak/rms 随说话变化但平台仍无历史：再检查 24 kHz -> 16 kHz 重采样、Opus 编码队列和 UDP 发送。
 
@@ -257,14 +269,15 @@ SHA256  7F197A08EB6BEC8202D25F2FCBACA2348628C8BE49A1950CEC5583841D3FD979
 | A/B 事件与 listening 状态 | PASS |
 | 语音下行 / 扬声器 | PASS |
 | 轻量表情 assets | PASS（直接写分区） |
-| 麦克风 I2S RX 返回 PCM | FAIL / 未定位 |
-| STT 与平台历史 | FAIL |
-| 完整多轮对话 | BLOCKED BY MIC |
+| 麦克风 I2S RX 返回 PCM | PASS |
+| STT 与平台历史 | PASS |
+| 完整多轮对话 | PASS |
+| TX 关闭后再 PTT | PASS（EnableInput 先拉 TX） |
 | 打断、断网重连 | 待测 |
 | 固件 OTA | 当前分区不支持 |
 | 唤醒词 / AEC | 明确不在经典 ESP32 PTT 基线内 |
 
-只有麦克风 PCM、STT、TTS、多轮、打断和重连全部通过后，才可将完整移植标记为完成。
+PTT 基线（麦克风、STT、多轮、TX 关闭后再听）已通过。完整移植仍待测：打断、断网重连；固件 OTA 当前分区不支持。
 
 ## 8. 回退与范围
 

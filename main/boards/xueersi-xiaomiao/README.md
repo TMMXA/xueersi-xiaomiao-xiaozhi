@@ -60,13 +60,12 @@ keys. The microSD slot is reserved but not mounted because XiaoZhi's core PTT
 flow does not consume it. The abandoned MPU6050 repair is intentionally out of
 scope.
 
-On-device testing has verified the display, controls, Wi-Fi provisioning,
-activation, MQTT connection, assets, and speaker output. Microphone uplink is
-still blocked: the device enters listening mode, but the service receives no
-recognizable speech and the current stereo-framed diagnostic codec has not yet
-reported a successful PCM read. See the handoff for the exact logs and next
-diagnostic step. Local wake word and AEC remain disabled until the PTT baseline
-is verified.
+On-device testing has verified display, controls, Wi-Fi provisioning, activation,
+MQTT, assets, speaker output, microphone PCM, STT, and multi-turn PTT chat.
+Full-duplex RX is clocked by TX on classic ESP32, so the codec enables TX
+before RX when input starts. That path was retested after power management
+turned TX off. Local wake word and AEC remain disabled on the classic ESP32
+PTT baseline. Barge-in and reconnect are still pending.
 
 ## Build
 
