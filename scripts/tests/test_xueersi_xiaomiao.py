@@ -67,10 +67,13 @@ class XueersiXiaomiaoBoardTests(unittest.TestCase):
         codec = (BOARD_DIR / "xiaomiao_audio_codec.cc").read_text(encoding="utf-8")
         header = (BOARD_DIR / "xiaomiao_audio_codec.h").read_text(encoding="utf-8")
         self.assertIn("void XiaomiaoAudioCodec::EnableInput(bool enable)", codec)
+        self.assertIn("void XiaomiaoAudioCodec::EnableOutput(bool enable)", codec)
         self.assertIn("i2s_channel_enable(tx_handle_)", codec)
+        self.assertIn("Keeping RX enabled while TX is active", codec)
         self.assertIn("i2s_channel_read failed", codec)
         self.assertIn("Read() entered", codec)
         self.assertIn("EnableInput(bool enable) override", header)
+        self.assertIn("EnableOutput(bool enable) override", header)
 
     def test_build_metadata_targets_classic_esp32_with_psram(self):
         config = json.loads((BOARD_DIR / "config.json").read_text(encoding="utf-8"))

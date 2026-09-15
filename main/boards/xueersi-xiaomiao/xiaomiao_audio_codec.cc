@@ -143,15 +143,51 @@ int XiaomiaoAudioCodec::Write(const int16_t* data, int samples) {
 }
 
 void XiaomiaoAudioCodec::EnableInput(bool enable) {
-    // Classic ESP32 full-duplex pairs generate BCLK/WS from the TX channel.
-    // PTT enables RX alone, so start TX first or i2s_channel_read times out.
-    if (enable && tx_handle_ != nullptr && !output_enabled_) {
-        std::lock_guard<std::mutex> lock(data_if_mutex_);
-        if (!output_enabled_) {
-            ESP_ERROR_CHECK(i2s_channel_enable(tx_handle_));
-            AudioCodec::EnableOutput(true);
-            ESP_LOGI(TAG, "Enabled TX clock source before RX (shared BCLK/WS)");
+    if (enable) {
+        // Classic ESP32 full-duplex: RX is slave and needs TX clocks first.
+        if (!output_enabled_ && tx_handle_ != nullptr) {
+            std::lock_guard<std::mutex> lock(data_if_mutex_);
+            if (!output_enabled_) {
+                ESP_ERROR_CHECK(i2s_channel_enable(tx_handle_));
+                AudioCodec::EnableOutput(true);
+                ESP_LOGI(TAG, "Enabled TX clock source before RX (shared BCLK/WS)");
+            }
         }
+        std::lock_guard<std::mutex> lock(data_if_mutex_);
+        if (!rx_hw_enabled_) {
+            ESP_ERROR_CHECK(i2s_channel_enable(rx_handle_));
+            rx_hw_enabled_ = true;
+        }
+        AudioCodec::EnableInput(true);
+        return;
     }
-    NoAudioCodec::EnableInput(enable);
+
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    AudioCodec::EnableInput(false);
+    // Disabling slave RX while TX is playing can stall classic-ESP32
+    // full-duplex output. Keep RX until both directions are idle.
+    if (!output_enabled_ && rx_hw_enabled_) {
+        ESP_ERROR_CHECK(i2s_channel_disable(rx_handle_));
+        rx_hw_enabled_ = false;
+        ESP_LOGI(TAG, "Disabled RX after both directions went idle");
+    } else if (rx_hw_enabled_) {
+        ESP_LOGI(TAG, "Keeping RX enabled while TX is active (shared duplex)");
+    }
+}
+
+void XiaomiaoAudioCodec::EnableOutput(bool enable) {
+    std::lock_guard<std::mutex> lock(data_if_mutex_);
+    if (enable != output_enabled_) {
+        if (enable) {
+            ESP_ERROR_CHECK(i2s_channel_enable(tx_handle_));
+        } else {
+            ESP_ERROR_CHECK(i2s_channel_disable(tx_handle_));
+        }
+        AudioCodec::EnableOutput(enable);
+    }
+    if (!enable && !input_enabled_ && rx_hw_enabled_) {
+        ESP_ERROR_CHECK(i2s_channel_disable(rx_handle_));
+        rx_hw_enabled_ = false;
+        ESP_LOGI(TAG, "Disabled RX after both directions went idle");
+    }
 }
