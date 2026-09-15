@@ -15,6 +15,11 @@
 
 #define TAG "XueersiXiaomiao"
 
+static_assert(AUDIO_INPUT_SAMPLE_RATE == AUDIO_OUTPUT_SAMPLE_RATE,
+              "Xiaomiao RX and TX share BCLK/WS and must use one sample rate");
+static_assert(AUDIO_INPUT_SAMPLE_RATE == 24000,
+              "The current Xiaomiao hardware profile is intentionally 24 kHz");
+
 namespace {
 
 constexpr uint8_t kFrameRate[] = {0x01, 0x2C, 0x2D};
