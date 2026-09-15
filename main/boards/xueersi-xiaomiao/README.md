@@ -60,11 +60,13 @@ keys. The microSD slot is reserved but not mounted because XiaoZhi's core PTT
 flow does not consume it. The abandoned MPU6050 repair is intentionally out of
 scope.
 
-The first-stage no-display image has booted on the device through the Wi-Fi
-provisioning hotspot. The current display build compiles with ESP-IDF v6.1, but
-still needs on-device validation of panel orientation/color, all keys, audio
-capture/playback, server conversation, interruption, and reconnect behavior.
-Local wake word and AEC remain disabled until that PTT baseline is verified.
+On-device testing has verified the display, controls, Wi-Fi provisioning,
+activation, MQTT connection, assets, and speaker output. Microphone uplink is
+still blocked: the device enters listening mode, but the service receives no
+recognizable speech and the current stereo-framed diagnostic codec has not yet
+reported a successful PCM read. See the handoff for the exact logs and next
+diagnostic step. Local wake word and AEC remain disabled until the PTT baseline
+is verified.
 
 ## Build
 

@@ -1,11 +1,11 @@
 #include "application.h"
 #include "assets/lang_config.h"
 #include "button.h"
-#include "codecs/no_audio_codec.h"
 #include "config.h"
 #include "display/lcd_display.h"
 #include "display/lvgl_display/lvgl_theme.h"
 #include "wifi_board.h"
+#include "xiaomiao_audio_codec.h"
 
 #include <driver/spi_master.h>
 #include <esp_lcd_panel_io.h>
@@ -36,12 +36,10 @@ constexpr uint8_t kColorMode[] = {0x05};
 constexpr uint8_t kColumnRange[] = {0x00, 0x00, 0x00, 0x7F};
 constexpr uint8_t kRowRange[] = {0x00, 0x00, 0x00, 0x9F};
 constexpr uint8_t kPositiveGamma[] = {
-    0x02, 0x1C, 0x07, 0x12, 0x37, 0x32, 0x29, 0x2D,
-    0x29, 0x25, 0x2B, 0x39, 0x00, 0x01, 0x03, 0x10,
+    0x02, 0x1C, 0x07, 0x12, 0x37, 0x32, 0x29, 0x2D, 0x29, 0x25, 0x2B, 0x39, 0x00, 0x01, 0x03, 0x10,
 };
 constexpr uint8_t kNegativeGamma[] = {
-    0x03, 0x1D, 0x07, 0x06, 0x2E, 0x2C, 0x29, 0x2D,
-    0x2E, 0x2E, 0x37, 0x3F, 0x00, 0x00, 0x02, 0x10,
+    0x03, 0x1D, 0x07, 0x06, 0x2E, 0x2C, 0x29, 0x2D, 0x2E, 0x2E, 0x37, 0x3F, 0x00, 0x00, 0x02, 0x10,
 };
 
 // This is the black-tab initialization used by working Xiaomiao firmware. The
@@ -105,7 +103,8 @@ private:
         bus_config.sclk_io_num = DISPLAY_CLK_PIN;
         bus_config.quadwp_io_num = GPIO_NUM_NC;
         bus_config.quadhd_io_num = GPIO_NUM_NC;
-        bus_config.max_transfer_sz = DISPLAY_NATIVE_WIDTH * DISPLAY_NATIVE_HEIGHT * sizeof(uint16_t);
+        bus_config.max_transfer_sz =
+            DISPLAY_NATIVE_WIDTH * DISPLAY_NATIVE_HEIGHT * sizeof(uint16_t);
         ESP_ERROR_CHECK(spi_bus_initialize(DISPLAY_SPI_HOST, &bus_config, SPI_DMA_CH_AUTO));
     }
 
@@ -200,13 +199,11 @@ private:
                 }
             });
         });
-        b_button_.OnLongPress([this]() {
-            Application::GetInstance().Schedule([this]() { EnterWifiConfigMode(); });
-        });
+        b_button_.OnLongPress(
+            [this]() { Application::GetInstance().Schedule([this]() { EnterWifiConfigMode(); }); });
 
-        up_button_.OnClick([this]() {
-            Application::GetInstance().Schedule([this]() { SetVolume(10); });
-        });
+        up_button_.OnClick(
+            [this]() { Application::GetInstance().Schedule([this]() { SetVolume(10); }); });
         up_button_.OnLongPress([this]() {
             Application::GetInstance().Schedule([this]() {
                 if (Application::GetInstance().GetDeviceState() == kDeviceStateStarting) {
@@ -216,9 +213,8 @@ private:
                 GetDisplay()->ShowNotification(Lang::Strings::MAX_VOLUME);
             });
         });
-        down_button_.OnClick([this]() {
-            Application::GetInstance().Schedule([this]() { SetVolume(-10); });
-        });
+        down_button_.OnClick(
+            [this]() { Application::GetInstance().Schedule([this]() { SetVolume(-10); }); });
         down_button_.OnLongPress([this]() {
             Application::GetInstance().Schedule([this]() {
                 if (Application::GetInstance().GetDeviceState() == kDeviceStateStarting) {
@@ -229,12 +225,10 @@ private:
             });
         });
 
-        left_button_.OnClick([this]() {
-            Application::GetInstance().Schedule([this]() { SetTheme("light"); });
-        });
-        right_button_.OnClick([this]() {
-            Application::GetInstance().Schedule([this]() { SetTheme("dark"); });
-        });
+        left_button_.OnClick(
+            [this]() { Application::GetInstance().Schedule([this]() { SetTheme("light"); }); });
+        right_button_.OnClick(
+            [this]() { Application::GetInstance().Schedule([this]() { SetTheme("dark"); }); });
     }
 
 public:
@@ -251,9 +245,9 @@ public:
     }
 
     AudioCodec* GetAudioCodec() override {
-        static NoAudioCodecDuplex audio_codec(AUDIO_INPUT_SAMPLE_RATE, AUDIO_OUTPUT_SAMPLE_RATE,
-                                              AUDIO_I2S_GPIO_BCLK, AUDIO_I2S_GPIO_WS,
-                                              AUDIO_I2S_GPIO_DOUT, AUDIO_I2S_GPIO_DIN);
+        static XiaomiaoAudioCodec audio_codec(AUDIO_INPUT_SAMPLE_RATE, AUDIO_I2S_GPIO_BCLK,
+                                              AUDIO_I2S_GPIO_WS, AUDIO_I2S_GPIO_DOUT,
+                                              AUDIO_I2S_GPIO_DIN);
         return &audio_codec;
     }
 
