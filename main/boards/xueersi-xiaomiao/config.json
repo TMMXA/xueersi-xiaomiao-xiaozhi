@@ -1,0 +1,15 @@
+{
+    "type": "xueersi-xiaomiao",
+    "target": "esp32",
+    "builds": [
+        {
+            "name": "xueersi-xiaomiao",
+            "sdkconfig_append": [
+                "CONFIG_SPIRAM=y",
+                "CONFIG_SPIRAM_MODE_QUAD=y",
+                "CONFIG_SPIRAM_TYPE_AUTO=y",
+                "CONFIG_SPIRAM_USE_MALLOC=y"
+            ]
+        }
+    ]
+}
