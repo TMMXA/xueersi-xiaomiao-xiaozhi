@@ -61,6 +61,7 @@ class XueersiXiaomiaoBoardTests(unittest.TestCase):
         self.assertIn("CreateButton(RIGHT_BUTTON_GPIO, true)", source)
         self.assertIn("CreateButton(A_BUTTON_GPIO, true)", source)
         self.assertGreaterEqual(source.count("Application::GetInstance().Schedule"), 8)
+        self.assertGreaterEqual(source.count("kDeviceStateStarting"), 7)
 
     def test_build_metadata_targets_classic_esp32_with_psram(self):
         config = json.loads((BOARD_DIR / "config.json").read_text(encoding="utf-8"))

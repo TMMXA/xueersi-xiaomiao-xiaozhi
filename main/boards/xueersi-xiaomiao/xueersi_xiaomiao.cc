@@ -145,6 +145,9 @@ private:
     }
 
     void SetVolume(int delta) {
+        if (Application::GetInstance().GetDeviceState() == kDeviceStateStarting) {
+            return;
+        }
         auto* codec = GetAudioCodec();
         int volume = codec->output_volume() + delta;
         if (volume < 0) {
@@ -157,6 +160,10 @@ private:
     }
 
     void SetTheme(const char* name) {
+        // LcdDisplay::SetTheme expects SetupUI() to have created all labels.
+        if (Application::GetInstance().GetDeviceState() == kDeviceStateStarting) {
+            return;
+        }
         auto* theme = LvglThemeManager::GetInstance().GetTheme(name);
         if (theme != nullptr) {
             GetDisplay()->SetTheme(theme);
@@ -166,13 +173,21 @@ private:
     void InitializeButtons() {
         a_button_.OnPressDown([]() {
             ESP_LOGI(TAG, "A/PTT pressed: start listening");
-            Application::GetInstance().Schedule(
-                []() { Application::GetInstance().StartListening(); });
+            Application::GetInstance().Schedule([]() {
+                auto& app = Application::GetInstance();
+                if (app.GetDeviceState() != kDeviceStateStarting) {
+                    app.StartListening();
+                }
+            });
         });
         a_button_.OnPressUp([]() {
             ESP_LOGI(TAG, "A/PTT released: stop listening");
-            Application::GetInstance().Schedule(
-                []() { Application::GetInstance().StopListening(); });
+            Application::GetInstance().Schedule([]() {
+                auto& app = Application::GetInstance();
+                if (app.GetDeviceState() != kDeviceStateStarting) {
+                    app.StopListening();
+                }
+            });
         });
 
         b_button_.OnClick([this]() {
@@ -194,6 +209,9 @@ private:
         });
         up_button_.OnLongPress([this]() {
             Application::GetInstance().Schedule([this]() {
+                if (Application::GetInstance().GetDeviceState() == kDeviceStateStarting) {
+                    return;
+                }
                 GetAudioCodec()->SetOutputVolume(100);
                 GetDisplay()->ShowNotification(Lang::Strings::MAX_VOLUME);
             });
@@ -203,6 +221,9 @@ private:
         });
         down_button_.OnLongPress([this]() {
             Application::GetInstance().Schedule([this]() {
+                if (Application::GetInstance().GetDeviceState() == kDeviceStateStarting) {
+                    return;
+                }
                 GetAudioCodec()->SetOutputVolume(0);
                 GetDisplay()->ShowNotification(Lang::Strings::MUTED);
             });
