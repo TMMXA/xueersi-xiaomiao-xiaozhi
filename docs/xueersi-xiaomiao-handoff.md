@@ -6,6 +6,43 @@
 > output**. This supersedes the 16 kHz first-stage recommendation below while
 > preserving the shared GPIO25/GPIO26 clock requirement.
 
+## 2026-09-15 移植进度
+
+当前私有开发分支已完成可编译的“小智核心 + 小喵 UI”适配：
+
+- 新增板型 `xueersi-xiaomiao`，目标芯片为经典 ESP32。
+- 麦克风和扬声器统一使用 24 kHz、32-bit、左声道 I2S 标准模式；BCLK/WS
+  共用 GPIO26/GPIO25，RX/TX 分别为 GPIO32/GPIO33。
+- 第一阶段固件已实机刷写并启动到 Wi-Fi 配网热点；当时使用无屏版本，尚未完成
+  麦克风、扬声器和 PTT 的端到端人工测试。
+- 第二阶段已接入 ST7735 160x128 横屏 UI 和六个实体按键，并通过 ESP-IDF 6.1
+  完整编译。应用固件约 2.06 MiB，应用分区剩余约 30%。设备关机期间未刷写这版，
+  因此屏幕方向、颜色、按键和 24 kHz 语音链路仍需下次上电做硬件验收。
+
+当前按键映射：
+
+| 按键 | GPIO | 小智功能 |
+| --- | ---: | --- |
+| A | 34 | 按住说话，松开停止 |
+| B | 12 | 单击切换对话；启动阶段或长按进入配网 |
+| 上 | 2 | 音量 +10；长按最大音量 |
+| 下 | 13 | 音量 -10；长按静音 |
+| 左 | 27 | 浅色主题 |
+| 右 | 35 | 深色主题 |
+
+屏幕使用 SPI2：SCLK=18、MOSI=23、MISO=19、CS=5、DC=4、无硬件复位。
+GPIO19 被保留在总线配置中，以便后续按需接回共总线的 TF 卡（CS=22）；当前小智
+核心功能不依赖 TF 卡。GPIO34/35 没有内部上拉，按键适配显式禁用了这两路的软件
+上拉。
+
+构建命令：
+
+```powershell
+python .\scripts\build.py xueersi-xiaomiao --wake-word disabled
+```
+
+当前阶段继续保持本地唤醒词和 AEC 关闭；它们不是完成 PTT 对话链路的前置条件。
+
 
 > 目标：把当前已经完成硬件音频改装的学而思“小喵”ESP32 掌机交接给本地 Codex，继续完成 `xiaozhi-esp32` 软件适配。
 >

@@ -8,7 +8,6 @@
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_lvgl_port.h>
-#include <esp_psram.h>
 #include <material_symbols.h>
 #include <noto_emoji.h>
 #include <src/misc/cache/lv_cache.h>
@@ -123,7 +122,9 @@ SpiLcdDisplay::SpiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_h
 
 #if CONFIG_SPIRAM
     // lv image cache, currently only PNG is supported
-    size_t psram_size_mb = esp_psram_get_size() / 1024 / 1024;
+    // Classic ESP32 can detect an 8MB PSRAM chip while only 4MB is mapped into
+    // its address space. Size caches from the usable heap, not the physical IC.
+    size_t psram_size_mb = heap_caps_get_total_size(MALLOC_CAP_SPIRAM) / 1024 / 1024;
     if (psram_size_mb >= 8) {
 #if CONFIG_LV_USE_BUILTIN_MALLOC
         // Base TLSF pool is CONFIG_LV_MEM_SIZE_KILOBYTES in PSRAM; grow it so
