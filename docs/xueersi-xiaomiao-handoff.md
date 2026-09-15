@@ -1,480 +1,263 @@
-# 学而思“小喵”ESP32 掌机：小智 AI 移植交接文档
+# 学而思“小喵”移植交接（xiaozhi-esp32）
 
-> [!IMPORTANT]
-> 2026-09-15 implementation update: after reviewing device support and the current
-> XiaoZhi audio path, the user chose **24 kHz for both microphone input and speaker
-> output**. This supersedes the 16 kHz first-stage recommendation below while
-> preserving the shared GPIO25/GPIO26 clock requirement.
+更新时间：2026-09-15
 
-## 2026-09-15 移植进度
+## 1. 交接结论
 
-当前私有开发分支已完成可编译的“小智核心 + 小喵 UI”适配：
+`xueersi-xiaomiao` 板型的软件适配已经完成到“可构建、可发布、待实机验收”状态：
 
-- 新增板型 `xueersi-xiaomiao`，目标芯片为经典 ESP32。
-- 麦克风和扬声器统一使用 24 kHz、32-bit、左声道 I2S 标准模式；BCLK/WS
-  共用 GPIO26/GPIO25，RX/TX 分别为 GPIO32/GPIO33。
-- 第一阶段固件已实机刷写并启动到 Wi-Fi 配网热点；当时使用无屏版本，尚未完成
-  麦克风、扬声器和 PTT 的端到端人工测试。
-- 第二阶段已接入 ST7735 160x128 横屏 UI 和六个实体按键，并通过 ESP-IDF 6.1
-  完整编译。应用固件约 2.06 MiB，应用分区剩余约 30%。设备关机期间未刷写这版，
-  因此屏幕方向、颜色、按键和 24 kHz 语音链路仍需下次上电做硬件验收。
+- 经典 ESP32-WROVER/B，4 MB Flash、带 PSRAM。
+- ICS43434 麦克风与 MAX98357A 功放共用 GPIO25/GPIO26 的 I2S 时钟。
+- 麦克风输入和扬声器输出均固定为 **24 kHz、32-bit、mono left slot**。
+- 原机 ST7735 屏幕已接入小智 LVGL UI。
+- 六个实体按键已接入 PTT、对话、音量和主题操作。
+- Wi-Fi 配网、小智协议栈、音频收发及显示代码均已纳入该板型。
+- 本地构建、板型回归测试和 GitHub Linux CI 均通过。
 
-当前按键映射：
+当前设备因实验室人员较多已经关机，**24 kHz UI 版本尚未刷入并进行实机验收**。因此不能把屏幕方向/颜色、实体按键、24 kHz 端到端语音、打断和断线重连标为已验证。
 
-| 按键 | GPIO | 小智功能 |
+私有仓库：<https://github.com/TMMXA/xueersi-xiaomiao-xiaozhi>
+
+分支：`main`
+
+本次写交接前的实现基线：`133e9f1ca2ce249e24f0a75d9bc21a3315fa0148`
+
+上游仓库：<https://github.com/78/xiaozhi-esp32>
+
+## 2. 硬件事实与证据边界
+
+### 2.1 音频接线
+
+| 信号 | GPIO | 方向 |
 | --- | ---: | --- |
-| A | 34 | 按住说话，松开停止 |
+| WS / LRCLK（共用） | 25 | ESP32 -> MIC / AMP |
+| BCLK / SCK（共用） | 26 | ESP32 -> MIC / AMP |
+| ICS43434 SD | 32 | MIC -> ESP32 |
+| MAX98357A DIN | 33 | ESP32 -> AMP |
+
+GPIO25/GPIO26 是 RX/TX 共用时钟，输入和输出不能配置成不同采样率。当前代码用编译期断言锁定两路相等且均为 24 kHz。
+
+已完成的硬件证据：
+
+- 早期 MicroPython 测试在 16 kHz 下分别验证了 ICS43434 录音和 MAX98357A 放音。
+- 电池独立供电时扬声器能够播放测试音。
+- 第一阶段无屏小智固件已实机启动到 Wi-Fi 配网热点。
+
+尚未完成的硬件证据：
+
+- 24 kHz 同时收发和小智服务器端到端对话。
+- 当前带屏固件的启动、显示、按键、录放音及网络稳定性。
+
+音频模块 VCC 最终焊接到主板的具体电源节点没有可靠记录。若排查噪声、功耗或低电量问题，应先实测 VCC-GND 并追线，不要猜测或改线。
+
+### 2.2 屏幕
+
+原生面板为 ST7735 128x160，当前按 160x128 横屏使用：
+
+| 信号 | GPIO |
+| --- | ---: |
+| SPI host | SPI2 |
+| SCLK | 18 |
+| MOSI | 23 |
+| MISO | 19 |
+| CS | 5 |
+| DC | 4 |
+| RESET | 无 |
+
+当前配置为 SPI mode 0、40 MHz、RGB、`swap_xy=true`、`mirror_x=true`、不反色。最终方向、RGB/BGR 和反色参数仍要以实机画面为准。
+
+GPIO19 保留在 SPI 总线定义中。原机 TF 卡与屏幕共用 SPI2，TF 卡 CS 为 GPIO22；当前固件未挂载 TF 卡。
+
+### 2.3 按键
+
+按键均为低电平有效：
+
+| 按键 | GPIO | 当前功能 |
+| --- | ---: | --- |
+| A | 34 | 按下开始 PTT，松开停止收听 |
 | B | 12 | 单击切换对话；启动阶段或长按进入配网 |
 | 上 | 2 | 音量 +10；长按最大音量 |
 | 下 | 13 | 音量 -10；长按静音 |
 | 左 | 27 | 浅色主题 |
 | 右 | 35 | 深色主题 |
 
-屏幕使用 SPI2：SCLK=18、MOSI=23、MISO=19、CS=5、DC=4、无硬件复位。
-GPIO19 被保留在总线配置中，以便后续按需接回共总线的 TF 卡（CS=22）；当前小智
-核心功能不依赖 TF 卡。GPIO34/35 没有内部上拉，按键适配显式禁用了这两路的软件
-上拉。
+GPIO34/35 没有内部上拉，代码对 A/右键禁用软件上拉，依赖小喵 PCB 上已有的空闲高电平偏置。所有会改变 `Application` 状态的按键回调均通过调度执行；启动状态还加了保护，避免 UI 对象尚未创建时修改主题或音量。
 
-构建命令：
+### 2.4 明确不做的硬件范围
+
+- 不继续返修 MPU6050；该补焊尝试未获得可靠识别结果。
+- 不重新设计或改变已验证的音频接线，除非出现可复现的硬件故障。
+- 不在当前 PTT 基线前加入本地唤醒词或 AEC。
+- 不把 TF 卡挂载作为语音链路验收的前置条件。
+
+## 3. 代码落点
+
+主要文件：
+
+- `main/boards/xueersi-xiaomiao/config.h`：24 kHz 音频、LCD 和按键 GPIO。
+- `main/boards/xueersi-xiaomiao/xueersi_xiaomiao.cc`：板型、I2S codec、LCD 初始化及按键行为。
+- `main/boards/xueersi-xiaomiao/config.json`：经典 ESP32 + PSRAM 的构建元数据。
+- `main/boards/xueersi-xiaomiao/README.md`：板型说明和构建入口。
+- `main/CMakeLists.txt`：板型注册及适合 160x128 屏幕的 14 px 内置字体。
+- `main/idf_component.yml`：`waveshare/esp_lcd_st7735` 依赖。
+- `main/display/lcd_display.cc`：按可映射 PSRAM 容量选择缓存，而不是按物理 8 MB 误选过大的缓存档位。
+- `scripts/tests/test_xueersi_xiaomiao.py`：引脚、采样率、板型唯一性和运行时约束回归测试。
+- `.github/workflows/build.yml`：只测试并构建 `xueersi-xiaomiao` 的私有仓库 CI。
+
+关键实现提交：
+
+| 提交 | 内容 |
+| --- | --- |
+| `de17a8b` | 第一阶段无屏板型，可作为已知能启动配网的回退点 |
+| `601d460` | 加入 ST7735 UI 与六按键控制 |
+| `f44eac7` | 用测试锁定小喵硬件配置 |
+| `9993d6b` | 启动阶段按键保护 |
+| `133e9f1` | CI 收敛为只构建小喵固件 |
+
+## 4. 构建与验证记录
+
+### 4.1 环境与命令
+
+已使用 ESP-IDF v6.1 构建。Windows 环境的导入脚本为：
 
 ```powershell
-python .\scripts\build.py xueersi-xiaomiao --wake-word disabled
+. 'C:\Espressif\tools\Microsoft.v6.1.PowerShell_profile.ps1'
 ```
 
-当前阶段继续保持本地唤醒词和 AEC 关闭；它们不是完成 PTT 对话链路的前置条件。
+从仓库根目录构建：
 
+```powershell
+python .\scripts\build.py xueersi-xiaomiao `
+  --name xueersi-xiaomiao `
+  --wake-word disabled
+```
 
-> 目标：把当前已经完成硬件音频改装的学而思“小喵”ESP32 掌机交接给本地 Codex，继续完成 `xiaozhi-esp32` 软件适配。
->
-> 当前原则：**硬件音频链路已经验证正常，后续优先做软件适配，不要再改音频接线。**
-
----
-
-## 1. 当前硬件状态
-
-### 1.1 主控
-
-- 设备：学而思“小喵”ESP32 编程掌机
-- 主控：ESP32-WROVER / ESP32-WROVER-B 系列
-- Flash：4 MB
-- PSRAM：8 MB
-- 当前已刷入 MicroPython，可通过串口 REPL / `mpremote` 调试。
-- 当前 MicroPython 使用 `ESP32_GENERIC-SPIRAM` 系列固件；若后续精确依赖版本，请先执行 `os.uname()` 确认。
-
-### 1.2 原机功能
-
-当前掌机仍保留原有屏幕、按键、TF 卡等硬件。
-
-后续若要适配完整 UI，请优先参考：
-
-- `references/xueersi_xiaomiao_schematic.pdf`
-- https://github.com/ZyoungInc/xueersi-idf
-- https://github.com/pysn2012/xueersi-xiaomiao
-
-不要重新猜测屏幕、按键、SD 卡 GPIO。
-
----
-
-## 2. 已完成的音频硬件改装
-
-加装模块：
-
-- 麦克风：**ICS43434**
-- 功放：**MAX98357A**
-- 形式：ICS43434 + MAX98357A 二合一音频模块
-- 模块资料：
-  - `references/ICS43434_MAX98357_module_reference.pdf`
-  - https://www.xinlucity.com/?s=resourcedetail/index/id/544.html
-
-模块主要引脚：
-
-- `WS`：ICS43434 帧/声道时钟
-- `SCK`：ICS43434 位时钟
-- `SD`：ICS43434 音频数据输出
-- `LRCLK`：MAX98357A 帧/声道时钟
-- `BCLK`：MAX98357A 位时钟
-- `DIN`：MAX98357A 音频数据输入
-- `VCC`
-- `GND`
-
----
-
-## 3. 当前音频接线（已实测通过）
+构建脚本会生成：
 
 ```text
-ESP32 / 小喵                     ICS43434 + MAX98357A
-
-GPIO25  -----------------------> WS
-   |
-   +---------------------------> LRCLK
-
-GPIO26  -----------------------> SCK
-   |
-   +---------------------------> BCLK
-
-GPIO32  <----------------------- SD       (MIC -> ESP32)
-
-GPIO33  -----------------------> DIN      (ESP32 -> SPK)
-
-GND     -----------------------> GND
-电源    -----------------------> VCC
+build/merged-binary.bin
 ```
 
-### 3.1 关键约束
+该文件应从 Flash 偏移 `0x0` 写入。
 
-**GPIO25 / GPIO26 是麦克风和功放共享的 I2S 时钟。**
+### 4.2 已确认结果
 
-因此：
-
-- `WS` 与 `LRCLK` 共用 GPIO25
-- `SCK` 与 `BCLK` 共用 GPIO26
-- 麦克风 RX 与扬声器 TX 不能使用互不兼容的采样时钟
-- 第一版软件统一采用 **16 kHz**
-- 不要沿用某些小智参考板的“MIC 16 kHz / SPK 24 kHz 两套独立时钟”配置
-
-当前已验证基线：
+本地 ESP-IDF 6.1 完整构建与合并通过。最新应用镜像统计：
 
 ```text
-sample_rate = 16000 Hz
-BCLK/SCK    = GPIO26
-WS/LRCLK    = GPIO25
-MIC SD      = GPIO32
-SPK DIN     = GPIO33
+xiaozhi.bin        0x20e440 bytes
+最小 app 分区      0x2f0000 bytes
+剩余               0xe1bc0 bytes（30%）
 ```
 
----
+板型相关定向测试最终为 16 项全部通过。Windows 上全量主机测试曾运行 73 项，其中 68 项通过，5 项仅因 `WinError 32` 临时目录文件句柄清理失败；没有断言失败。随后 Linux CI 全量运行 85 项测试并全部通过，因此该 Windows 现象不构成功能失败证据。
 
-## 4. 供电状态
+GitHub Actions 运行：
 
-音频模块已经焊接完成，掌机也已经合盖。
+- Run：<https://github.com/TMMXA/xueersi-xiaomiao-xiaozhi/actions/runs/34948258918>
+- 结果：成功。
+- 已完成：85 项主机测试、ESP-IDF 6.1 构建、合并固件上传。
+- CI artifact：`xiaozhi_xueersi-xiaomiao_133e9f1ca2ce249e24f0a75d9bc21a3315fa0148`
+- CI 合并镜像大小：`0x341e39`，写入偏移 `0x0`。
 
-**已完成电池独立供电测试：拔掉 USB 后，仅使用掌机电池上电，扬声器启动测试音可以正常播放。**
+下载该 CI 固件：
 
-注意：
-
-- 本交接记录里没有最终记录音频模块 `VCC` 具体焊到了主板的哪个电源节点。
-- 不要仅根据旧讨论猜测是 `VBUS`、`BAT+` 或主板 `VCC`。
-- 如果后续需要分析电源噪声、功耗或低电量行为，请实测模块 `VCC-GND` 电压并追线确认。
-
----
-
-## 5. 已完成的 MicroPython 音频验证
-
-### 5.1 麦克风
-
-已验证配置：
-
-```python
-I2S(
-    0,
-    sck=Pin(26),
-    ws=Pin(25),
-    sd=Pin(32),
-    mode=I2S.RX,
-    bits=32,
-    format=I2S.STEREO,
-    rate=16000,
-)
+```powershell
+gh run download 34948258918 `
+  --repo TMMXA/xueersi-xiaomiao-xiaozhi `
+  --name xiaozhi_xueersi-xiaomiao_133e9f1ca2ce249e24f0a75d9bc21a3315fa0148
 ```
 
-结果：
+### 4.3 当前机器上的交付固件
 
-- ICS43434 能稳定输出数据
-- 左声道有有效数据
-- 右声道保持 0
-- 对着麦克风说话 / 拍手时，左声道峰值明显跳变
-- 曾观察到瞬态峰值约 `3,189,472`
-- 可以确认 GPIO25、GPIO26、GPIO32 以及 ICS43434 均工作正常
-
-右声道为 0 是当前模块的正常表现，不应直接判定为故障。
-
-### 5.2 扬声器
-
-已验证配置：
-
-```python
-I2S(
-    0,
-    sck=Pin(26),
-    ws=Pin(25),
-    sd=Pin(33),
-    mode=I2S.TX,
-    bits=32,
-    format=I2S.STEREO,
-    rate=16000,
-)
-```
-
-结果：
-
-- MAX98357A 可正常驱动喇叭
-- GPIO33 TX 正常
-- GPIO25 / GPIO26 共用时钟在播放侧正常
-- 数字音量调节有效
-
-### 5.3 “快速哒哒声”已定位
-
-第一次播放 440 Hz 测试音时曾出现快速“哒哒”声。
-
-原因是测试程序使用：
+以下文件位于仓库外，不会随 Git clone 自动出现：
 
 ```text
-sample_rate = 16000
-buffer      = 256 samples
-tone        = 440 Hz
+F:\杂活\小喵\xiaozhi-xueersi-xiaomiao-24khz-ui-20260915.bin
+SHA256  0B17A6FC967E4D56E4B2478A0F5C0816A397518A1BF727D1EC2BD236C7CCB474
+
+F:\杂活\小喵\xiaozhi-xueersi-xiaomiao-24khz-ui-20260915.zip
+SHA256  1C5D18805783E019C1425338ADF35DB62B4849803968CC51AD68934F1ABAFEF1
 ```
 
-此时：
+ZIP 内含 `merged-binary.bin`。在另一台机器继续时，优先从 GitHub Actions 下载 CI artifact，或从源码重新构建；不要假定本地交付文件与 CI 构建逐字节相同，因为构建元数据可能造成少数字节差异。
+
+## 5. 下次上电的准确验收流程
+
+设备当前处于关机状态。下次实验室条件合适时按以下顺序进行：
+
+1. 上电并连接 USB，确认实际串口号，不要沿用旧的 COM 号。
+2. 先做只读连接检查：
+
+   ```powershell
+   python -m esptool --chip esp32 --port COMx chip-id
+   ```
+
+3. 写入合并镜像。将 `COMx` 和固件路径替换为实际值：
+
+   ```powershell
+   python -m esptool --chip esp32 --port COMx --baud 460800 `
+     --before default-reset --after hard-reset write-flash `
+     --flash-mode dio --flash-size 4MB --flash-freq 40m `
+     0x0 'F:\杂活\小喵\xiaozhi-xueersi-xiaomiao-24khz-ui-20260915.bin'
+   ```
+
+4. 以 115200 波特率打开串口日志。若板子不能自动进入下载模式，再按板子实际 BOOT/RESET 操作，不要先擦除 Flash。
+5. 检查冷启动：无重启循环、PSRAM 初始化正常、UI 能进入。
+6. 检查 LCD：横屏 160x128、无偏移/裁切、颜色正确、无镜像、状态和聊天文字可读。
+7. 检查六键：
+   - B 键进入/切换配网或对话。
+   - 上/下键改变音量，长按最大/静音。
+   - 左/右键切换浅色/深色主题。
+   - A 键按下开始 PTT、松开结束。
+8. 完成 Wi-Fi 配网，确认能连接小智服务器。
+9. 做 PTT 端到端测试：观察录音开始/结束日志，确认服务器收到语音，并确认返回语音从喇叭播放。
+10. 连续做至少三轮对话，再测试播放时打断、Wi-Fi 临时断开后的重连。
+11. 保存串口日志，并在本文件末尾记录每一项的通过/失败和复现条件。
+
+如果显示异常，只调整 `config.h` 中方向、镜像、反色或 RGB/BGR 参数；一次只改一个维度并拍照记录。若音频异常，先从串口确认 I2S 初始化、采样率和收发状态，再检查峰值/RMS，暂不改接线。
+
+## 6. 未完成项与通过标准
+
+| 项目 | 当前状态 | 完成标准 |
+| --- | --- | --- |
+| 24 kHz RX/TX 初始化 | 编译和配置测试通过 | 实机无 I2S 错误且可连续工作 |
+| ST7735 UI | 编译通过 | 方向、颜色、刷新和文字均正确 |
+| 六按键 | 代码和回归测试通过 | 每个短按/长按行为与表格一致 |
+| Wi-Fi / 服务器 | 无屏旧版到过配网热点 | 当前版完成配网并稳定在线 |
+| PTT 上行 | 未实测 | A 键控制录音且服务端正确识别 |
+| 语音下行 | 未实测 | 回复连续、无明显速率或声道问题 |
+| 打断 / 重连 | 未实测 | 多轮、打断和断网恢复均正常 |
+| 唤醒词 / AEC | 明确关闭 | PTT 基线通过后再单独评估 |
+| TF 卡 / MPU6050 | 不在当前范围 | 不阻塞移植验收 |
+
+只有上表中从 24 kHz RX/TX 到打断/重连的实机项目全部通过，才可以把“小喵上的完整小智移植”标记为完成。
+
+## 7. 回退与继续开发
+
+- 若当前 UI 固件无法启动，可先回退到 `de17a8b` 重建无屏版本，确认基础启动/配网，再二分定位 UI 相关问题。
+- 不要用 `git reset --hard` 覆盖未保存的现场日志或本地修改；为实验修复新建分支并单独提交。
+- 继续同步上游时，优先检查 `AudioCodec`、`LcdDisplay`、板型注册和构建脚本的接口变化，再运行全量主机测试与单板构建。
+- 保留 UART 日志、I2S 初始化日志、音频峰值/RMS、Wi-Fi 状态和协议连接状态，避免只凭听感定位问题。
+
+## 8. 实机验收记录（待填写）
 
 ```text
-440 * 256 / 16000 = 7.04 cycles
-```
-
-buffer 首尾不连续，循环播放形成约：
-
-```text
-16000 / 256 = 62.5 Hz
-```
-
-的周期性点击。
-
-改用 1000 Hz（256 点刚好 16 个周期），或使用 400 点 buffer 生成 440 Hz（刚好 11 个周期）后，噪声消失。
-
-**因此该“哒哒声”已确认是测试波形拼接问题，不是硬件故障。**
-
----
-
-## 6. MPU6050 状态：不要作为下一步重点
-
-主板原本有 MPU6050 空焊位，曾尝试补焊 MPU6050。
-
-结果：
-
-- 整机没有因补焊发生短路
-- ESP32 和屏幕仍可正常启动
-- MPU6050 一直没有被可靠识别
-- 已决定停止继续返修
-
-当前原则：
-
-**不要为了小智移植继续折腾 MPU6050。**
-
-如果未来确实需要姿态传感器，优先考虑外接 I2C 模块。
-
----
-
-## 7. 下一步：移植 xiaozhi-esp32
-
-目标项目：
-
-- https://github.com/78/xiaozhi-esp32
-
-建议创建新的 board：
-
-```text
-xueersi-xiaomiao
-```
-
-### 7.1 第一阶段目标：只跑通语音
-
-第一版不要同时做完整 UI、唤醒词、AEC。
-
-优先实现：
-
-```text
-按键触发 / 开始录音
-        ↓
-ICS43434
-        ↓
-ESP32 / xiaozhi
-        ↓
-服务器
-        ↓
-返回语音
-        ↓
-MAX98357A
-        ↓
-喇叭
-```
-
-建议先做 PTT（Push-to-Talk）：
-
-- A 键：开始 / 结束对话，或按住说话
-- 暂时不要先做本地唤醒词
-- 暂时不要先做 AEC
-
-### 7.2 音频层 GPIO
-
-```c
-BCLK / SCK     GPIO26
-WS / LRCLK     GPIO25
-MIC_DATA_IN    GPIO32
-SPK_DATA_OUT   GPIO33
-```
-
-### 7.3 第一版采样率
-
-优先：
-
-```text
-MIC = 16000 Hz
-SPK = 16000 Hz
-```
-
-原因：
-
-1. RX/TX 共享 GPIO25 / GPIO26 时钟。
-2. 16 kHz 已经通过 MicroPython 实测。
-3. 语音识别/唤醒/对话链路优先保证 16 kHz 输入。
-4. 基础链路跑通前不要先引入额外重采样。
-
-### 7.4 I2S 实现重点
-
-MicroPython 测试使用 RX/TX 分开验证，不能直接等同于最终 xiaozhi 的全双工实现。
-
-正式 ESP-IDF 适配应：
-
-- 使用同一组 BCLK / WS
-- RX 数据引脚：GPIO32
-- TX 数据引脚：GPIO33
-- 在 ESP-IDF I2S 驱动层配置兼容的双向数据流
-- 确保 RX / TX 共享同一时钟参数
-- 不要给 RX/TX 配置两个不同 sample rate
-
-如果当前 `xiaozhi-esp32` 音频抽象默认假设独立 MIC/SPK 时钟，需要新增/修改一个适配类，而不是硬套现有 16k/24k board 配置。
-
----
-
-## 8. 第二阶段：屏幕和按键
-
-音频链路稳定后再加入：
-
-- ST7735 / ST7735R 160×128 屏幕
-- 六个实体按键
-- Wi-Fi 状态
-- 小智状态 / 表情
-- 对话提示
-- 音量状态
-
-屏幕、按键、TF 卡等原机 GPIO 请从以下资料读取，不要凭印象重新分配：
-
-- `references/xueersi_xiaomiao_schematic.pdf`
-- https://github.com/ZyoungInc/xueersi-idf
-- https://github.com/pysn2012/xueersi-xiaomiao
-
----
-
-## 9. 已知注意事项
-
-### 不要做
-
-1. **不要再修改当前音频硬件接线。**
-2. **不要继续返修 MPU6050。**
-3. **不要把 MIC 配成 16 kHz、SPK 配成 24 kHz，却仍然要求二者共享 GPIO25/26。**
-4. **不要把测试时的 62.5 Hz 点击声误判成硬件噪声。**
-5. **不要在没确认当前实际音频供电节点前擅自更改模块供电。**
-6. **不要一开始就加入唤醒词、AEC、复杂 UI；先跑通基础双向语音。**
-
-### 建议保留的调试能力
-
-开发阶段至少保留：
-
-- UART 日志
-- I2S RX 峰值 / RMS 调试
-- I2S TX 纯音测试
-- Wi-Fi 状态日志
-- 小智连接状态
-- 音频 RX/TX 启停日志
-
----
-
-## 10. 参考资料
-
-### 本交接包内
-
-1. `references/xueersi_xiaomiao_schematic.pdf`
-   - 小喵掌机原理图
-   - 重点：ESP32-WROVER、扩展 GPIO、LCD、按键、供电、I2C/I2S 备注
-   - 原理图明确备注：GPIO25/26 作为 I2S 共用时钟，麦克风/功放采样率必须一致
-
-2. `references/ICS43434_MAX98357_module_reference.pdf`
-   - 芯路城 ICS43434 + MAX98357A 二合一模块资料
-   - 包含芯片型号、模块引脚说明、5V 标称供电、AI 小智参考接线和测试固件链接
-
-### Web / GitHub
-
-- 小智：
-  - https://github.com/78/xiaozhi-esp32
-
-- 小喵 ESP-IDF：
-  - https://github.com/ZyoungInc/xueersi-idf
-
-- 小喵社区资料 / MicroPython：
-  - https://github.com/pysn2012/xueersi-xiaomiao
-
-- ICS43434 + MAX98357 模块资料页：
-  - https://www.xinlucity.com/?s=resourcedetail/index/id/544.html
-
-- ICS43434 Datasheet：
-  - https://invensense.tdk.com/wp-content/uploads/2016/02/DS-000069-ICS-43434-v1.2.pdf
-
-- MAX98357A Datasheet：
-  - https://www.analog.com/media/en/technical-documentation/data-sheets/max98357a-max98357b.pdf
-
-- MicroPython I2S：
-  - https://docs.micropython.org/en/latest/library/machine.I2S.html
-
----
-
-## 11. 给 Codex 的启动提示
-
-第一轮建议先完成：
-
-1. 拉取/阅读当前 `xiaozhi-esp32`。
-2. 找出经典 ESP32（非 ESP32-S3）上最接近的 board。
-3. 找到项目当前 AudioCodec / I2S 抽象。
-4. 判断现有抽象是否支持：
-   - BCLK/WS 共享
-   - RX=GPIO32
-   - TX=GPIO33
-   - RX/TX 同为 16 kHz
-5. 给出最小改动方案。
-6. 创建 `xueersi-xiaomiao` board。
-7. 第一阶段只验证：
-   - Wi-Fi
-   - 小智服务器连接
-   - MIC 上传
-   - SPK 播放
-8. 上述通过后，再接入屏幕与按键 UI。
-
-### 最重要的当前事实
-
-```text
-硬件已经验证正常。
-
-MIC:
-  ICS43434
-  WS   = GPIO25
-  SCK  = GPIO26
-  SD   = GPIO32
-
-SPK:
-  MAX98357A
-  LRCLK = GPIO25
-  BCLK  = GPIO26
-  DIN   = GPIO33
-
-Audio clock:
-  GPIO25 / GPIO26 shared
-
-Known-good baseline:
-  16 kHz
-  32-bit I2S frame
-  Stereo framing
-  ICS43434 active on one channel
-
-Battery-only power:
-  verified working
-
-Do not redesign the hardware unless a reproducible hardware fault is found.
+日期：
+测试固件 commit / SHA256：
+串口：
+
+启动：             PASS / FAIL / 未测
+PSRAM：            PASS / FAIL / 未测
+LCD 方向与颜色：    PASS / FAIL / 未测
+A/B/方向键：        PASS / FAIL / 未测
+Wi-Fi 配网：        PASS / FAIL / 未测
+服务器连接：        PASS / FAIL / 未测
+PTT 上行：          PASS / FAIL / 未测
+语音下行：          PASS / FAIL / 未测
+连续三轮：          PASS / FAIL / 未测
+播放打断：          PASS / FAIL / 未测
+断网重连：          PASS / FAIL / 未测
+
+关键日志 / 复现步骤：
 ```
