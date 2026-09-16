@@ -65,7 +65,7 @@ MQTT, assets, speaker output, microphone PCM, STT, and multi-turn PTT chat.
 Full-duplex RX is clocked by TX on classic ESP32, so the codec enables TX
 before RX when input starts. That path was retested after power management
 turned TX off. Local wake word and AEC remain disabled on the classic ESP32
-PTT baseline. Barge-in and reconnect are still pending.
+PTT baseline. Barge-in and reconnect have also been verified on the device.
 
 ## Build
 
